@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	//"net/http"
 
 	"task-service/utils"
@@ -78,13 +79,33 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	userID := c.GetHeader("X-User-Id")
 
-	tasks, err := h.Service.List(userID)
+	page := 1
+	limit := 20
+
+	if p := c.Query("page"); p != "" {
+		fmt.Sscan(p, &page)
+	}
+
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscan(l, &limit)
+	}
+
+	offset := (page - 1) * limit
+
+	tasks, err := h.Service.Repo.ListWithPagination(userID, limit, offset)
 	if err != nil {
 		utils.Error(c, 500, err)
 		return
 	}
 
-	c.JSON(200, gin.H{"success": true, "data": tasks})
+	c.JSON(200, gin.H{
+		"success": true,
+		"data": tasks,
+		"meta": gin.H{
+			"page":  page,
+			"limit": limit,
+		},
+	})
 }
 
 // ======================
