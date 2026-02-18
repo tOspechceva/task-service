@@ -45,11 +45,13 @@ func main() {
 
 	router := gin.Default()
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	taskHandler := handlers.NewTaskHandler(db)
 
-	router.GET("/tasks", handlers.GetTasks)
+	router.POST("/tasks", taskHandler.Create)
+	router.GET("/tasks", taskHandler.List)
+	router.GET("/tasks/:id", taskHandler.Get)
+	router.PUT("/tasks/:id", taskHandler.Update)
+	router.DELETE("/tasks/:id", taskHandler.Delete)
 
 	log.Println("Server started on :3003")
 	router.Run(":3003")
