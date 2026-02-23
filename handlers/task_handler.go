@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
+	//"fmt"
 	//"net/http"
 
 	"task-service/utils"
@@ -12,6 +12,10 @@ import (
 	"task-service/services"
 
 	"github.com/gin-gonic/gin"
+
+	"strconv"
+	"time"
+
 )
 
 type TaskHandler struct {
@@ -79,20 +83,71 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	userID := c.GetHeader("X-User-Id")
 
-	page := 1
-	limit := 20
+	filter := dto.TaskFilter{
+		UserID: userID,
+	}
+	// ======================
+	// ЧТЕНИЕ QUERY
+	// ======================
 
-	if p := c.Query("page"); p != "" {
-		fmt.Sscan(p, &page)
+	if v := c.Query("status_id"); v != "" {
+		filter.StatusID = &v
 	}
 
-	if l := c.Query("limit"); l != "" {
-		fmt.Sscan(l, &limit)
+	if v := c.Query("priority_id"); v != "" {
+		filter.PriorityID = &v
 	}
 
-	offset := (page - 1) * limit
+	if v := c.Query("parent_task_id"); v != "" {
+		filter.ParentTaskID = &v
+	}
 
-	tasks, err := h.Service.Repo.ListWithPagination(userID, limit, offset)
+	if v := c.Query("search"); v != "" {
+		filter.Search = &v
+	}
+
+	if v := c.Query("is_completed"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			utils.Error(c, 400, err)
+			return
+		}
+		filter.IsCompleted = &b
+	}
+
+	if v := c.Query("due_before"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			utils.Error(c, 400, err)
+			return
+		}
+		filter.DueBefore = &t
+	}
+
+	if v := c.Query("due_after"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			utils.Error(c, 400, err)
+			return
+		}
+		filter.DueAfter = &t
+	}
+
+	if v := c.Query("page"); v != "" {
+		p, _ := strconv.Atoi(v)
+		filter.Page = p
+	}
+
+	if v := c.Query("limit"); v != "" {
+		l, _ := strconv.Atoi(v)
+		filter.Limit = l
+	}
+
+	// ======================
+	// ВЫПОЛНЕНИЕ
+	// ======================
+
+	tasks, err := h.Service.Filter(filter)
 	if err != nil {
 		utils.Error(c, 500, err)
 		return
@@ -100,11 +155,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"success": true,
-		"data": tasks,
-		"meta": gin.H{
-			"page":  page,
-			"limit": limit,
-		},
+		"data":    tasks,
 	})
 }
 

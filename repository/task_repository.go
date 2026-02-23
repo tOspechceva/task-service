@@ -3,6 +3,9 @@ package repository
 import (
 	"database/sql"
 	"task-service/models"
+
+	"fmt"
+	"task-service/dto"
 )
 
 type TaskRepository struct {
@@ -191,6 +194,122 @@ LIMIT $2 OFFSET $3
 `
 
 	rows, err := r.DB.Query(query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []models.Task
+
+	for rows.Next() {
+		var t models.Task
+		err := rows.Scan(
+			&t.ID,
+			&t.UserID,
+			&t.ParentTaskID,
+			&t.Title,
+			&t.Description,
+			&t.StatusID,
+			&t.PriorityID,
+			&t.DueDate,
+			&t.CompletedAt,
+			&t.IsCompleted,
+			&t.OrderIndex,
+			&t.CreatedAt,
+			&t.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+
+	return tasks, nil
+}
+// =====================
+// Filter
+// =====================
+func (r *TaskRepository) Filter(f dto.TaskFilter) ([]models.Task, error) {
+
+	query := `
+SELECT id,user_id,parent_task_id,title,description,
+status_id,priority_id,due_date,completed_at,
+is_completed,order_index,created_at,updated_at
+FROM tasks
+WHERE user_id = $1
+`
+
+	args := []interface{}{f.UserID}
+	argIndex := 2
+
+	// ======================
+	// ДИНАМИЧЕСКИЕ ФИЛЬТРЫ
+	// ======================
+
+	if f.StatusID != nil {
+		query += fmt.Sprintf(" AND status_id = $%d", argIndex)
+		args = append(args, *f.StatusID)
+		argIndex++
+	}
+
+	if f.PriorityID != nil {
+		query += fmt.Sprintf(" AND priority_id = $%d", argIndex)
+		args = append(args, *f.PriorityID)
+		argIndex++
+	}
+
+	if f.IsCompleted != nil {
+		query += fmt.Sprintf(" AND is_completed = $%d", argIndex)
+		args = append(args, *f.IsCompleted)
+		argIndex++
+	}
+
+	if f.ParentTaskID != nil {
+		query += fmt.Sprintf(" AND parent_task_id = $%d", argIndex)
+		args = append(args, *f.ParentTaskID)
+		argIndex++
+	}
+
+	if f.Search != nil {
+		query += fmt.Sprintf(" AND LOWER(title) LIKE LOWER($%d)", argIndex)
+		args = append(args, "%"+*f.Search+"%")
+		argIndex++
+	}
+
+	if f.DueBefore != nil {
+		query += fmt.Sprintf(" AND due_date <= $%d", argIndex)
+		args = append(args, *f.DueBefore)
+		argIndex++
+	}
+
+	if f.DueAfter != nil {
+		query += fmt.Sprintf(" AND due_date >= $%d", argIndex)
+		args = append(args, *f.DueAfter)
+		argIndex++
+	}
+
+	query += " ORDER BY order_index"
+
+	// ======================
+	// ПАГИНАЦИЯ
+	// ======================
+
+	if f.Limit <= 0 {
+		f.Limit = 20
+	}
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+
+	offset := (f.Page - 1) * f.Limit
+
+	query += fmt.Sprintf(" LIMIT %d OFFSET %d", f.Limit, offset)
+
+	// ======================
+	// ВЫПОЛНЕНИЕ
+	// ======================
+
+	rows, err := r.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

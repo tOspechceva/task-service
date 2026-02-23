@@ -5,6 +5,7 @@ import (
 
 	"task-service/models"
 	"task-service/repository"
+	"task-service/dto"
 )
 
 type TaskService struct {
@@ -44,4 +45,9 @@ func (s *TaskService) Update(task *models.Task) error {
 // DELETE
 func (s *TaskService) Delete(id string) error {
 	return s.Repo.Delete(id)
+}
+
+// Filter
+func (s *TaskService) Filter(f dto.TaskFilter) ([]models.Task, error) {
+	return s.Repo.Filter(f)
 }
