@@ -1,58 +1,80 @@
+// main.go
 package main
 
 import (
+	"database/sql"
 	"log"
+	"net/http"
 
-	"task-service/config"
-	"task-service/database"
-	"task-service/handlers"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	
+	_ "github.com/lib/pq" // или другой драйвер БД
+	
+	"task-service/handlers"
+	"task-service/repository"
+	"task-service/services"
 )
 
 func main() {
-
-	err := godotenv.Load()
+	// =====================
+	// 1. ПОДКЛЮЧЕНИЕ К БД
+	// =====================
+	dsn := "postgres://postgres:qwerty123@localhost:5432/task_db?sslmode=disable"
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatal("Ошибка загрузки .env")
+		log.Fatalf("❌ Failed to connect to DB: %v", err)
 	}
-
-	db, err := config.ConnectDB()
-	if err != nil {
-		log.Fatal("Ошибка подключения к БД:", err)
+	
+	if err := db.Ping(); err != nil {
+		log.Fatalf("❌ DB ping failed: %v", err)
 	}
-
 	defer db.Close()
+	
+	log.Println("✅ Database connected")
 
-	// =========================
-	// МИГРАЦИИ
-	// =========================
-	err = database.RunMigrations(db)
-	if err != nil {
-		log.Fatal("Ошибка миграции:", err)
+	// =====================
+	// 2. СОЗДАНИЕ ЗАВИСИМОСТЕЙ (Dependency Injection)
+	// =====================
+	
+	// DB → Repository
+	taskRepo := repository.NewTaskRepository(db)
+	
+	// Repository → Service
+	taskService := services.NewTaskService(taskRepo)
+	
+	// Service → Handler
+	taskHandler := handlers.NewTaskHandler(taskService) // 👈 Теперь передаём service, а не db
+
+	// =====================
+	// 3. НАСТРОЙКА GIN
+	// =====================
+	r := gin.Default()
+	
+
+
+	// =====================
+	// 4. РЕГИСТРАЦИЯ РОУТОВ
+	// =====================
+	tasks := r.Group("/tasks")
+	{
+		tasks.GET("", taskHandler.List)           // GET /tasks
+		tasks.GET("/:id", taskHandler.Get)        // GET /tasks/:id
+		tasks.POST("", taskHandler.Create)        // POST /tasks
+		tasks.PUT("/:id", taskHandler.Update)     // PUT /tasks/:id
+		tasks.DELETE("/:id", taskHandler.Delete)  // DELETE /tasks/:id
 	}
 
-	// =========================
-	// SEED DATA
-	// =========================
-	err = database.SeedData(db)
-	if err != nil {
-		log.Fatal("Ошибка seed:", err)
+	// Health check
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// =====================
+	// 5. ЗАПУСК СЕРВЕРА
+	// =====================
+	log.Println("🚀 Server starting on :3003")
+	if err := r.Run(":3003"); err != nil {
+		log.Fatalf("❌ Failed to start server: %v", err)
 	}
-
-	log.Println("База данных готова")
-
-	router := gin.Default()
-
-	taskHandler := handlers.NewTaskHandler(db)
-
-	router.POST("/tasks", taskHandler.Create)
-	router.GET("/tasks", taskHandler.List)
-	router.GET("/tasks/:id", taskHandler.Get)
-	router.PUT("/tasks/:id", taskHandler.Update)
-	router.DELETE("/tasks/:id", taskHandler.Delete)
-
-	log.Println("Server started on :3003")
-	router.Run(":3003")
 }

@@ -1,11 +1,11 @@
+// services/task_service.go
 package services
 
 import (
 	"time"
-
+	"task-service/dto"
 	"task-service/models"
 	"task-service/repository"
-	"task-service/dto"
 )
 
 type TaskService struct {
@@ -16,38 +16,47 @@ func NewTaskService(repo *repository.TaskRepository) *TaskService {
 	return &TaskService{Repo: repo}
 }
 
-// CREATE
+// =====================
+// WRITE OPERATIONS (Models)
+// =====================
+
+// Create принимает простую модель для записи в БД
 func (s *TaskService) Create(task *models.Task) error {
+	// Устанавливаем время создания, если нужно
+	if task.CreatedAt.IsZero() {
+		task.CreatedAt = time.Now()
+	}
+	if task.UpdatedAt.IsZero() {
+		task.UpdatedAt = time.Now()
+	}
 	return s.Repo.Create(task)
 }
 
-// GET
+// Get возвращает простую модель (для внутренней логики)
 func (s *TaskService) Get(id string) (*models.Task, error) {
 	return s.Repo.GetByID(id)
 }
 
-// LIST
-func (s *TaskService) List(userID string) ([]models.Task, error) {
-	return s.Repo.List(userID)
-}
-
-// UPDATE
+// Update принимает простую модель
 func (s *TaskService) Update(task *models.Task) error {
-
-	if task.IsCompleted && task.CompletedAt == nil {
-		now := time.Now()
-		task.CompletedAt = &now
-	}
-
+	task.UpdatedAt = time.Now()
 	return s.Repo.Update(task)
 }
 
-// DELETE
 func (s *TaskService) Delete(id string) error {
 	return s.Repo.Delete(id)
 }
 
-// Filter
-func (s *TaskService) Filter(f dto.TaskFilter) ([]models.Task, error) {
-	return s.Repo.Filter(f)
+// =====================
+// READ OPERATIONS (DTOs with Relations)
+// =====================
+
+// GetWithRelations возвращает полный ответ для API (с status и priority)
+func (s *TaskService) GetWithRelations(id string) (*dto.TaskResponse, error) {
+	return s.Repo.GetByIDWithRelations(id)
+}
+
+// FilterWithRelations возвращает список с полными данными
+func (s *TaskService) FilterWithRelations(f dto.TaskFilter) ([]dto.TaskResponse, error) {
+	return s.Repo.FilterWithRelations(f)
 }

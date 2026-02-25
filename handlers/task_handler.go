@@ -2,222 +2,255 @@ package handlers
 
 import (
 	"database/sql"
-	//"fmt"
-	//"net/http"
-
-	"task-service/utils"
-	"task-service/dto"
-	"task-service/models"
-	"task-service/repository"
-	"task-service/services"
-
-	"github.com/gin-gonic/gin"
-
+	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"task-service/dto"
+	"task-service/models"
+	"task-service/services"
+	"task-service/utils"
 )
 
 type TaskHandler struct {
 	Service *services.TaskService
 }
 
-func NewTaskHandler(db *sql.DB) *TaskHandler {
-	repo := repository.NewTaskRepository(db)
-	service := services.NewTaskService(repo)
+func NewTaskHandler(service *services.TaskService) *TaskHandler {
 	return &TaskHandler{Service: service}
 }
 
-// ======================
+// =====================
 // CREATE
-// ======================
+// =====================
 func (h *TaskHandler) Create(c *gin.Context) {
-
 	var req dto.CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"success": false})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid request body"})
 		return
 	}
 
-	userID := c.GetHeader("X-User-Id") // из gateway
+	userID := c.GetHeader("X-User-Id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "X-User-Id header is required"})
+		return
+	}
 
-	task := models.Task{
+	// 👇 Парсим due_date из *string в *time.Time
+	var dueDate *time.Time
+	if req.DueDate != nil && *req.DueDate != "" {
+		parsed, err := time.Parse(time.RFC3339, *req.DueDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false, 
+				"error": "Invalid due_date format. Use RFC3339 (e.g., 2026-03-31T23:59:59Z)",
+			})
+			return
+		}
+		dueDate = &parsed
+	}
+
+	// Создаём задачу
+	task := &models.Task{
 		UserID:       userID,
 		ParentTaskID: req.ParentTaskID,
 		Title:        req.Title,
 		Description:  req.Description,
 		StatusID:     req.StatusID,
 		PriorityID:   req.PriorityID,
-		DueDate:      req.DueDate,
+		DueDate:      dueDate, // 👈 Теперь *time.Time
 	}
 
-	err := h.Service.Create(&task)
-	if err != nil {
-		utils.Error(c, 500, err)
+	if err := h.Service.Create(task); err != nil {
+		utils.Error(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(201, gin.H{"success": true, "data": task})
+	// Возвращаем полную задачу с relations
+	fullTask, err := h.Service.GetWithRelations(task.ID)
+	if err != nil {
+		c.JSON(http.StatusCreated, gin.H{"success": true, "data": task})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": fullTask})
 }
-
-// ======================
-// GET
-// ======================
+// =====================
+// GET BY ID
+// =====================
 func (h *TaskHandler) Get(c *gin.Context) {
-
 	id := c.Param("id")
 
-	task, err := h.Service.Get(id)
+	task, err := h.Service.GetWithRelations(id)
 	if err != nil {
-		utils.Error(c, 404, err)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Task not found"})
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(200, gin.H{"success": true, "data": task})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": task})
 }
 
-// ======================
-// LIST
-// ======================
+// =====================
+// LIST / FILTER
+// =====================
 func (h *TaskHandler) List(c *gin.Context) {
-
 	userID := c.GetHeader("X-User-Id")
-
-	filter := dto.TaskFilter{
-		UserID: userID,
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "X-User-Id header is required"})
+		return
 	}
-	// ======================
-	// ЧТЕНИЕ QUERY
-	// ======================
 
+	filter := dto.TaskFilter{UserID: userID}
+
+	// Парсим query-параметры
 	if v := c.Query("status_id"); v != "" {
 		filter.StatusID = &v
 	}
-
 	if v := c.Query("priority_id"); v != "" {
 		filter.PriorityID = &v
 	}
-
 	if v := c.Query("parent_task_id"); v != "" {
 		filter.ParentTaskID = &v
 	}
-
 	if v := c.Query("search"); v != "" {
 		filter.Search = &v
 	}
-
 	if v := c.Query("is_completed"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			utils.Error(c, 400, err)
-			return
+		if b, err := strconv.ParseBool(v); err == nil {
+			filter.IsCompleted = &b
 		}
-		filter.IsCompleted = &b
 	}
-
 	if v := c.Query("due_before"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			utils.Error(c, 400, err)
-			return
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.DueBefore = &t
 		}
-		filter.DueBefore = &t
 	}
-
 	if v := c.Query("due_after"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			utils.Error(c, 400, err)
-			return
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.DueAfter = &t
 		}
-		filter.DueAfter = &t
 	}
-
 	if v := c.Query("page"); v != "" {
-		p, _ := strconv.Atoi(v)
-		filter.Page = p
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			filter.Page = p
+		}
 	}
-
 	if v := c.Query("limit"); v != "" {
-		l, _ := strconv.Atoi(v)
-		filter.Limit = l
+		if l, err := strconv.Atoi(v); err == nil && l > 0 {
+			filter.Limit = l
+		}
 	}
 
-	// ======================
-	// ВЫПОЛНЕНИЕ
-	// ======================
-
-	tasks, err := h.Service.Filter(filter)
+	tasks, err := h.Service.FilterWithRelations(filter)
 	if err != nil {
-		utils.Error(c, 500, err)
+		utils.Error(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    tasks,
+		"page":    filter.Page,
+		"limit":   filter.Limit,
 	})
 }
 
-// ======================
+// =====================
 // UPDATE
-// ======================
+// =====================
 func (h *TaskHandler) Update(c *gin.Context) {
-
 	id := c.Param("id")
 
-	var req dto.UpdateTaskRequest
+	var req dto.UpdateTaskRequest // 👈 Без скобок!
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"success": false})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid request body"})
 		return
 	}
 
-	task, err := h.Service.Get(id)
+	// Получаем текущую задачу (простую модель) для обновления полей
+	current, err := h.Service.Get(id)
 	if err != nil {
-		c.JSON(404, gin.H{"success": false})
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Task not found"})
+			return
+		}
+		utils.Error(c, http.StatusInternalServerError, err)
 		return
 	}
 
+	// Обновляем только переданные поля (partial update)
 	if req.Title != nil {
-		task.Title = *req.Title
+		current.Title = *req.Title
 	}
 	if req.Description != nil {
-		task.Description = req.Description
+		current.Description = req.Description
 	}
 	if req.StatusID != nil {
-		task.StatusID = *req.StatusID
+		current.StatusID = *req.StatusID
 	}
 	if req.PriorityID != nil {
-		task.PriorityID = *req.PriorityID
+		current.PriorityID = *req.PriorityID
 	}
 	if req.DueDate != nil {
-		task.DueDate = req.DueDate
+		if *req.DueDate == "" {
+			// Если пустая строка - очищаем дату
+			current.DueDate = nil
+		} else {
+			// Парсим RFC3339 строку в time.Time
+			parsed, err := time.Parse(time.RFC3339, *req.DueDate)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"success": false,
+					"error":   "Invalid due_date format. Use RFC3339 (e.g., 2026-03-31T23:59:59Z)",
+				})
+				return
+			}
+			current.DueDate = &parsed
+		}
 	}
 	if req.IsCompleted != nil {
-		task.IsCompleted = *req.IsCompleted
+		current.IsCompleted = *req.IsCompleted
+		// Авто-заполнение completed_at при завершении
+		if *req.IsCompleted && current.CompletedAt == nil {
+			now := time.Now()
+			current.CompletedAt = &now
+		}
+		// Если снимаем галочку - очищаем completed_at
+		if !*req.IsCompleted {
+			current.CompletedAt = nil
+		}
 	}
 
-	err = h.Service.Update(task)
-	if err != nil {
-		utils.Error(c, 400, err)
+	if err := h.Service.Update(current); err != nil {
+		utils.Error(c, http.StatusBadRequest, err)
 		return
 	}
 
-	c.JSON(200, gin.H{"success": true})
+	// Возвращаем обновлённую задачу с relations
+	updated, err := h.Service.GetWithRelations(id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Updated"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": updated})
 }
 
-// ======================
+// =====================
 // DELETE
-// ======================
+// =====================
 func (h *TaskHandler) Delete(c *gin.Context) {
-
 	id := c.Param("id")
 
-	err := h.Service.Delete(id)
-	if err != nil {
-		utils.Error(c, 500, err)
+	if err := h.Service.Delete(id); err != nil {
+		utils.Error(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(200, gin.H{"success": true})
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

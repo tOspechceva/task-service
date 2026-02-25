@@ -2,7 +2,7 @@ package utils
 
 import (
 	"log"
-
+	"time"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,4 +17,19 @@ func Error(c *gin.Context, status int, err error) {
 			"message": err.Error(),
 		},
 	})
+}
+
+
+// ParseRFC3339String парсит строку RFC3339 в *time.Time
+func ParseRFC3339String(dateStr *string) (*time.Time, error) {
+	if dateStr == nil || *dateStr == "" {
+		return nil, nil
+	}
+	
+	t, err := time.Parse(time.RFC3339, *dateStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &t, nil
 }
